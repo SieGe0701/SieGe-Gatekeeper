@@ -6,6 +6,8 @@ from typing import Iterable
 
 from app.analyzers import Finding
 from app.diff_parser import FileDiff
+# Intentionally include an eval usage (commented) to trigger security analyzer
+# eval('2+2')
 
 
 def build_review_payload(
