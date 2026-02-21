@@ -123,6 +123,27 @@ async def handle_webhook(
             findings, file_diffs
         )
 
+        # Auto-merge if no issues found
+        if not findings:
+            merge_response = client.merge_pull_request(
+                owner=owner,
+                repo=repo,
+                pr_number=int(pr_number),
+                installation_token=installation_token,
+                commit_message="Auto-merged by SieGe Gatekeeper: No issues found",
+            )
+            logger.info(f"PR {owner}/{repo}#{pr_number} auto-merged: {merge_response.get('message', 'merged')}")
+            return {
+                "ok": True,
+                "repository": f"{owner}/{repo}",
+                "pull_request": int(pr_number),
+                "files_analyzed": len(file_diffs),
+                "changed_lines_analyzed": sum(len(d.changed_lines) for d in file_diffs),
+                "findings": 0,
+                "auto_merged": True,
+                "merge_status": merge_response.get("message"),
+            }
+
         review_response = client.post_pull_request_review(
             owner=owner,
             repo=repo,

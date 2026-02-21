@@ -189,3 +189,27 @@ class GitHubAppClient:
         if not isinstance(response_json, dict):
             raise GitHubApiError("Unexpected response while posting pull request review")
         return response_json
+
+    def merge_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        installation_token: str,
+        commit_message: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if commit_message:
+            payload["commit_message"] = commit_message
+        payload["merge_method"] = "squash"
+
+        response_json = self._request(
+            method="PUT",
+            path=f"/repos/{owner}/{repo}/pulls/{pr_number}/merge",
+            installation_token=installation_token,
+            json_body=payload,
+            expected_statuses={200, 405, 409},
+        )
+        if not isinstance(response_json, dict):
+            raise GitHubApiError("Unexpected response while merging pull request")
+        return response_json
