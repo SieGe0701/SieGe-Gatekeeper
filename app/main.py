@@ -36,6 +36,7 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+#handle the webhook request from github and process the pull request event
 @app.post("/webhook")
 async def handle_webhook(
     request: Request,
