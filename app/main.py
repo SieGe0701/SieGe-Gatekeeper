@@ -5,7 +5,7 @@ import logging
 import os
 from functools import lru_cache
 from typing import Any
-
+from dotenv import load_dotenv,find_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from app.analyzers import run_all_analyzers
@@ -13,6 +13,8 @@ from app.diff_parser import build_file_diffs
 from app.github_client import GitHubApiError, GitHubAppClient
 from app.github_webhook import validate_webhook_signature
 from app.review_formatter import build_review_payload
+
+load_dotenv(find_dotenv())
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -40,7 +42,9 @@ async def handle_webhook(
     x_github_event: str = Header(default=""),
     x_hub_signature_256: str | None = Header(default=None),
 ) -> dict[str, Any]:
+
     payload_bytes = await request.body()
+    
     webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not webhook_secret:
         raise HTTPException(
@@ -48,18 +52,25 @@ async def handle_webhook(
             detail="Missing required environment variable: GITHUB_WEBHOOK_SECRET",
         )
 
-    if not validate_webhook_signature(
-        webhook_secret=webhook_secret,
-        payload=payload_bytes,
-        signature_header=x_hub_signature_256,
-    ):
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    # Detect whether this is a real GitHub delivery
+    is_github_delivery = bool(x_github_event)
 
+    if is_github_delivery:
+        if not validate_webhook_signature(
+            webhook_secret=webhook_secret,
+            payload=payload_bytes,
+            signature_header=x_hub_signature_256,
+            is_github_delivery=True,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # Parse JSON payload
     try:
         payload = json.loads(payload_bytes)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
+    # Only handle pull request events
     if x_github_event != "pull_request":
         return {
             "ignored": True,
@@ -74,7 +85,7 @@ async def handle_webhook(
             "reason": "unsupported_action",
             "action": action,
         }
-
+    
     pull_request = payload.get("pull_request") or {}
     if pull_request.get("draft"):
         return {"ignored": True, "reason": "draft_pull_request"}
@@ -96,15 +107,20 @@ async def handle_webhook(
 
     try:
         installation_token = client.get_installation_token(int(installation_id))
+
         pr_files = client.get_pull_request_files(
             owner=owner,
             repo=repo,
             pr_number=int(pr_number),
             installation_token=installation_token,
         )
+
         file_diffs = build_file_diffs(pr_files)
         findings = run_all_analyzers(file_diffs)
-        review_body, inline_comments = build_review_payload(findings, file_diffs)
+
+        review_body, inline_comments = build_review_payload(
+            findings, file_diffs
+        )
 
         review_response = client.post_pull_request_review(
             owner=owner,
@@ -115,9 +131,11 @@ async def handle_webhook(
             review_body=review_body,
             inline_comments=inline_comments,
         )
+
     except GitHubApiError as exc:
         logger.exception("GitHub API request failed during webhook processing")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     except RuntimeError as exc:
         logger.exception("Runtime error during webhook processing")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -132,7 +150,6 @@ async def handle_webhook(
         "inline_comments_posted": len(inline_comments),
         "review_id": review_response.get("id"),
     }
-
 
 if __name__ == "__main__":
     import uvicorn
